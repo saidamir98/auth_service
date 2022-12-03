@@ -11,4 +11,5 @@ type StorageI interface {
 	GetUserList(offset, limit int, search string) (resp *blogpost.GetUserListResponse, err error)
 	UpdateUser(entity *blogpost.UpdateUserRequest) error
 	DeleteUser(id string) error
+	GetUserByUsername(username string) (*blogpost.User, error)
 }

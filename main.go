@@ -44,7 +44,7 @@ func main() {
 
 	srv := grpc.NewServer()
 
-	authService := auth.NewAuthService(stg)
+	authService := auth.NewAuthService(cfg, stg)
 	blogpost.RegisterAuthServiceServer(srv, authService)
 
 	reflection.Register(srv)

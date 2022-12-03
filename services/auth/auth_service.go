@@ -2,104 +2,78 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log"
-
+	"time"
 	blogpost "uacademy/blogpost/auth_service/protogen/blogpost"
-	"uacademy/blogpost/auth_service/storage"
+	"uacademy/blogpost/auth_service/util"
 
-	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type authService struct {
-	stg storage.StorageI
-	blogpost.UnimplementedAuthServiceServer
-}
+// Login ...
+func (s *authService) Login(ctx context.Context, req *blogpost.LoginRequest) (*blogpost.TokenResponse, error) {
+	log.Println("Login...")
 
-// NewAuthService ...
-func NewAuthService(stg storage.StorageI) *authService {
-	return &authService{
-		stg: stg,
+	errAuth := errors.New("username or password wrong")
+
+	user, err := s.stg.GetUserByUsername(req.Username)
+	if err != nil {
+		log.Println(err.Error())
+		return nil, status.Errorf(codes.Unauthenticated, errAuth.Error())
 	}
-}
 
-// Ping ...
-func (s *authService) Ping(ctx context.Context, req *blogpost.Empty) (*blogpost.Pong, error) {
-	log.Println("Ping")
+	match, err := util.ComparePassword(user.Password, req.Password)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "util.ComparePassword: %s", err.Error())
+	}
 
-	return &blogpost.Pong{
-		Message: "OK",
+	if !match {
+		return nil, status.Errorf(codes.Unauthenticated, errAuth.Error())
+	}
+
+	m := map[string]interface{}{
+		"user_id":  user.Id,
+		"username": user.Username,
+	}
+
+	tokenStr, err := util.GenerateJWT(m, 10*time.Minute, s.cfg.SecretKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "util.GenerateJWT: %s", err.Error())
+	}
+
+	return &blogpost.TokenResponse{
+		Token: tokenStr,
 	}, nil
 }
 
-// CreateAuth ...
-func (s *authService) CreateUser(ctx context.Context, req *blogpost.CreateUserRequest) (*blogpost.User, error) {
-	id := uuid.New()
+// HasAccess ...
+func (s *authService) HasAccess(ctx context.Context, req *blogpost.TokenRequest) (*blogpost.HasAccessResponse, error) {
+	log.Println("HasAccess...")
 
-	// TODO - hash password
-
-	err := s.stg.AddUser(id.String(), req)
+	result, err := util.ParseClaims(req.Token, s.cfg.SecretKey)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.AddUser: %s", err.Error())
+		log.Println(status.Errorf(codes.Unauthenticated, "util.ParseClaims: %s", err.Error()))
+		return &blogpost.HasAccessResponse{
+			User:      nil,
+			HasAccess: false,
+		}, nil
 	}
 
-	user, err := s.stg.GetUserByID(id.String())
+	log.Println(result.Username)
+
+	user, err := s.stg.GetUserByID(result.UserID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.Stg.GetUserByID: %s", err.Error())
+		log.Println(status.Errorf(codes.Unauthenticated, "s.stg.GetUserByID: %s", err.Error()))
+		return &blogpost.HasAccessResponse{
+			User:      nil,
+			HasAccess: false,
+		}, nil
 	}
 
-	return user, nil
-}
-
-// UpdateUser ....
-func (s *authService) UpdateUser(ctx context.Context, req *blogpost.UpdateUserRequest) (*blogpost.User, error) {
-	// TODO - hash password
-
-	err := s.stg.UpdateUser(req)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.UpdateUser: %s", err.Error())
-	}
-
-	user, err := s.stg.GetUserByID(req.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.GetUserByID: %s", err.Error())
-	}
-
-	return user, nil
-}
-
-// DeleteUser ....
-func (s *authService) DeleteUser(ctx context.Context, req *blogpost.DeleteUserRequest) (*blogpost.User, error) {
-	user, err := s.stg.GetUserByID(req.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.GetUserByID: %s", err.Error())
-	}
-
-	err = s.stg.DeleteUser(user.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.DeleteUser: %s", err.Error())
-	}
-
-	return user, nil
-}
-
-// GetUserList ....
-func (s *authService) GetUserList(ctx context.Context, req *blogpost.GetUserListRequest) (*blogpost.GetUserListResponse, error) {
-	res, err := s.stg.GetUserList(int(req.Offset), int(req.Limit), req.Search)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.GetUserList: %s", err.Error())
-	}
-
-	return res, nil
-}
-
-// GetUserByID ....
-func (s *authService) GetUserByID(ctx context.Context, req *blogpost.GetUserByIDRequest) (*blogpost.User, error) {
-	user, err := s.stg.GetUserByID(req.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "s.stg.GetUserByID: %s", err.Error())
-	}
-
-	return user, nil
+	return &blogpost.HasAccessResponse{
+		User:      user,
+		HasAccess: true,
+	}, nil
 }
